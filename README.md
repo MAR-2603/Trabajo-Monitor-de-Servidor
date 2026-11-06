@@ -1,58 +1,84 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Monitor de Servidor con Laravel
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Trabajo práctico de Programación IV (UTN FRRe, cohorte 2026). La app lee datos del sistema operativo Windows y los muestra en una vista web (`/servidor`) y en una API JSON (`/api/metrics`). La vista se actualiza sola cada 5 segundos (polling).
 
-## About Laravel
+## Entorno usado
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+| | |
+|---|---|
+| Sistema operativo | Microsoft Windows 11 Pro (`php_uname`: Windows NT 10.0) |
+| PHP | 8.3.33 |
+| Laravel | 13.39.0 |
+| Base de datos | SQLite |
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Cómo ejecutarlo
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```sh
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate
+php artisan serve
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Abrir `http://localhost:8000/servidor`. El panel requiere iniciar sesión con un usuario administrador (ver [Seguridad](#seguridad)). Para crear uno:
 
-## Contributing
+```sh
+php artisan tinker
+$u = new App\Models\User(['name' => 'Admin', 'email' => 'admin@ejemplo.com', 'password' => 'una-clave-segura']);
+$u->is_admin = true;
+$u->save();
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Usar `localhost:8000` y no otro host o puerto: la API usa la sesión del navegador a través de Sanctum, que solo la acepta desde los dominios configurados en `SANCTUM_STATEFUL_DOMAINS` (por defecto incluye `localhost:8000`).
 
-## Code of Conduct
+## Estructura
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+| Parte | Archivo | Responsabilidad |
+|---|---|---|
+| Service | `app/Services/ServerMetrics.php` | Lee el sistema operativo (PHP + PowerShell/WMI) |
+| Controlador | `app/Http/Controllers/ServerController.php` | Devuelve la vista o el JSON |
+| Vista | `resources/views/servidor.blade.php` | Tarjetas + polling cada 5 s |
+| Rutas | `routes/web.php`, `routes/api.php` | `/servidor` y `/api/metrics` |
 
-## Security Vulnerabilities
+## Capturas
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+- Vista `/servidor`: [evidencias/capturas/01-servidor-panel.png](evidencias/capturas/01-servidor-panel.png)
+- Respuesta de `/api/metrics`: [evidencias/capturas/02-api-metrics.png](evidencias/capturas/02-api-metrics.png)
 
-## License
+## Respuestas
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+**1. ¿Por qué la temperatura suele aparecer como "No disponible" en Windows?**
+
+La clase `MSAcpi_ThermalZoneTemperature` está en el espacio de nombres `root/wmi`, y Windows solo permite leerla con permisos de administrador. Como `php artisan serve` corre con un usuario normal, la consulta falla, el `try/catch` del script la ignora y el valor queda en `null`. Aun ejecutando como administrador, muchas placas madre no informan la temperatura por ACPI, o informan un valor fijo de la zona térmica que no es la temperatura real de la CPU. En este equipo, sin permisos de administrador, el valor fue `null`.
+
+**2. ¿Por qué el script de PowerShell nunca debe incluir datos que vengan del usuario?**
+
+Porque `shell_exec()` ejecuta el texto como un comando en el servidor, con los permisos del proceso de PHP. Si se arma el script con datos de un formulario o de la URL, un atacante puede cerrar el comando previsto y agregar el suyo (por ejemplo `; Remove-Item ...` o descargar y ejecutar un programa). Eso es **inyección de comandos** y da control del servidor. Por eso el script es fijo (heredoc con comillas simples `<<<'PS'`, que no interpola variables) y se pasa codificado con `-EncodedCommand`.
+
+**3. ¿Qué riesgo tiene dejar `/api/metrics` sin autenticación en un servidor real?**
+
+- **Reconocimiento:** expone el nombre del equipo, la versión del sistema operativo y la versión exacta de PHP. Con eso un atacante busca vulnerabilidades conocidas para esas versiones.
+- **Información operativa:** el uso de CPU, memoria y disco, y el uptime (cuándo se reinició, es decir, si se aplicaron parches) ayudan a elegir el momento de un ataque.
+- **Denegación de servicio:** cada pedido abre un proceso de PowerShell, que es costoso. Muchos pedidos simultáneos pueden saturar el servidor. El `throttle:60,1` limita por cliente, pero no frena un ataque desde muchas IPs.
+
+En este proyecto la ruta está protegida con `auth:sanctum` y el permiso `can:view-security` (solo administradores), además del `throttle`.
+
+**4. Con polling cada 5 segundos, ¿cuántos pedidos por minuto recibe el servidor si hay 50 personas mirando?**
+
+Cada persona hace 60 / 5 = 12 pedidos por minuto, así que 50 × 12 = **600 pedidos por minuto** (10 por segundo), y cada uno abre PowerShell, aunque los datos no hayan cambiado.
+
+**5. Si una app solo necesita la temperatura, ¿qué datos recibe de más al llamar a `/api/metrics`?**
+
+Recibe todo lo demás: `hostname`, `os`, `php`, `disk` (`total_gb`, `free_gb`, `used_pct`), `memory` (`total_mb`, `available_mb`, `used_pct`), `cpu_pct`, `uptime_s` y `at`. Es decir, 12 valores de más para usar 1 (`cpu_temp_c`). Esto se llama **over-fetching**, y es el problema que resuelve GraphQL al dejar que el cliente pida solo los campos que necesita.
+
+## Seguridad
+
+Además del TP del monitor, el proyecto incluye el TP "Logging y detección de incidentes":
+
+- Login propio (`app/Http/Controllers/LoginController.php`) en `/login`.
+- Registro de intentos de autenticación en la tabla `login_attempts` y en el canal de log `security` (`storage/logs/security-AAAA-MM-DD.log`).
+- Middleware `SecurityLoginGuard` en `POST /login`: alerta a los 3 fallos y bloquea la IP 10 minutos a los 5 (HTTP 429).
+- Panel `/servidor` y API restringidos a usuarios con `is_admin` mediante el Gate `view-security`.
+
+El informe y las evidencias están en [evidencias/](evidencias/). Los tests se ejecutan con `php artisan test`.

@@ -7,4 +7,5 @@ use App\Http\Controllers\ServerController;
 Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
-Route::get('/metrics', [ServerController::class, 'api'])->middleware('throttle:60,1'); // máximo 60 pedidos por minuto
+Route::get('/metrics', [ServerController::class, 'api'])
+    ->middleware(['auth:sanctum', 'can:view-security', 'throttle:60,1']); // máximo 60 pedidos por minuto
